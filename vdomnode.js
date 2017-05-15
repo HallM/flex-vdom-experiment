@@ -1,20 +1,14 @@
 
-let nodeid = 1;
-
 function VdomNode(type, props, children) {
   this.type = type;
   this.props = props || {};
   this.children = children;
   this.finalized = false;
-  this.markedChildren = children.slice();
-
-  console.log('newnode', nodeid);
-  this.nodeid = nodeid++;
+  this.markedChildrenCount = children.length;
 }
 
 function isPropsChanged(oldProps, newProps) {
   if (oldProps === newProps) {
-    console.log('same props obj');
     return false;
   }
 
@@ -22,7 +16,6 @@ function isPropsChanged(oldProps, newProps) {
   const newKeys = Object.keys(newProps);
 
   if (oldKeys.length !== newKeys.length) {
-    console.log('keys dont match');
     return true;
   }
 
@@ -30,77 +23,63 @@ function isPropsChanged(oldProps, newProps) {
   return oldKeys.some(key => newKeys.indexOf(key) === -1 || oldProps[key] !== newProps[key]);
 }
 
-// function isChildrenChanged(oldChildren, newChildren) {
-//   if (oldChildren === newChildren) {
-//     console.log('children are exact same');
-//     return false;
-//   }
-
-//   if (oldChildren.length !== newChildren.length) {
-//     console.log(newChildren);
-//     console.log('children length is differnet', oldChildren.length, newChildren.length);
-//     return true;
-//   }
-
-//   return oldChildren.some(c => newChildren.indexOf(c) === -1);
-// }
-
 VdomNode.prototype.setNode = function setNode(type, props, children) {
   if (type !== this.type) {
-    console.log('new because type');
     return new VdomNode(type, props, children);
   }
 
   if (isPropsChanged(this.props, props)) {
-    console.log('new because props');
     return new VdomNode(type, props, children);
   }
-
-  // if (isChildrenChanged(this.children, children)) {
-  //   console.log('new because children');
-  //   return new VdomNode(type, props, children);
-  // }
 
   // more ending children? we know 100% for sure, new one
   if (children.length > this.children.length) {
-    console.log('new because more children');
     return new VdomNode(type, props, children);
   }
-
-  // items in here must be in the same order as children too
-  this.markedChildren = [];
 
   // if the new set has any item not in the old, then we need a new one 100% certain
-  const hasNewChild = children.some((c, i) => {
-    // while we go through, we act like we *may* re-use, so we mark children
-    // it's ok to just mark anyway, this node will get cleaned up anyway if it was a waste
-    this.markedChildren.push(c);
-
-    return this.children[i] === c;
-  });
-  if (hasNewChild) {
-    console.log('new because new child');
+  if (children.some((c, i) => this.children[i] !== c)) {
     return new VdomNode(type, props, children);
   }
 
-  // it is possible that children can be added later, so we don't bother
-  console.log('reused', this.nodeid);
+  // it is possible that children can be added later, so we just track until something is out of order
+  this.markedChildrenCount = children.length;
   return this;
 };
 
-VdomNode.prototype.addChild = function setNode(child) {
+VdomNode.prototype.addChild = function addChild(child) {
   // check if the child exists, but not marked yet first
-  if (this.children.length <= this.markedChildren.length)
-
-  if (this.finalized) {
-    return new VdomNode(this.type, this.props, this.children.concat(child));
+  if (this.children.length > this.markedChildrenCount) {
+    if (this.children[this.markedChildrenCount] === child) {
+      // then we just keep going, might be ok.
+      // any removals are caught by finalize
+      this.markedChildrenCount++;
+      return this;
+    }
   }
 
-  this.children.push(child);
+  // make sure child is finalized
+  const finalizedChild = child.finalize();
+
+  if (this.finalized) {
+    return new VdomNode(this.type, this.props, this.children.slice(0, this.markedChildrenCount).concat(finalizedChild));
+  }
+
+  this.children.push(finalizedChild);
+  this.markedChildrenCount++;
   return this;
 };
 
 VdomNode.prototype.finalize = function finalize() {
+  if (this.finalized) {
+    return this;
+  }
+
+  // it is possible that the last child was removed before finalization
+  if (this.children.length !== this.markedChildrenCount) {
+    return new VdomNode(this.type, this.props, this.children).finalize();
+  }
+
   this.finalized = true;
   return this;
 };
